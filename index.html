@@ -17,6 +17,7 @@ select,input,button{font-family:'Noto Sans Thai',sans-serif}
 @keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
 @keyframes shake{0%,100%{transform:translateX(0)}20%{transform:translateX(-8px)}40%{transform:translateX(8px)}60%{transform:translateX(-5px)}80%{transform:translateX(5px)}}
+@keyframes slideLoad{0%{transform:translateX(-100%)}100%{transform:translateX(200%)}}
 .fu{animation:fadeUp .25s ease}
 .shake{animation:shake .4s ease}
 input[type=number]::-webkit-inner-spin-button{opacity:.4}
@@ -36,9 +37,14 @@ input[type=number]::-webkit-inner-spin-button{opacity:.4}
 <div id="root"></div>
 <script type="text/babel">
 const {useState,useEffect,useCallback,useMemo,useRef}=React;
-const LS="tea_stock_v5";
-const load=()=>{try{const r=localStorage.getItem(LS);if(r)return JSON.parse(r);}catch{}return null;};
-const save=s=>{try{localStorage.setItem(LS,JSON.stringify(s));}catch{}};
+const SCRIPT_URL="https://script.google.com/macros/s/AKfycbwoY8e2XtkRH-p9zRDjM5HA7eN00uEDa802JHuifQMlrq-0etpUS2eH31VaguxkUs1HTA/exec";
+// โหลดข้อมูลจาก Google Sheets
+const load=()=>null; // ใช้ loadRemote แทน (async)
+const save=async(s)=>{
+  try{
+    await fetch(SCRIPT_URL,{method:"POST",body:JSON.stringify(s)});
+  }catch(e){console.error("Save failed",e);}
+};
 
 const DEF={
   ingredients:[
@@ -214,8 +220,30 @@ function PinModal({authorizedUsers,lockout,onSuccess,onCancel,onUpdateLockout,ti
 // ══════════════════════════════════════════════════════════════
 function App(){
   const [tab,setTab]=useState("produce");
-  const [state,setState]=useState(()=>{const s=load();return s?{...DEF,...s,batchCounter:s.batchCounter||1,authorizedUsers:s.authorizedUsers||[],pinLockout:s.pinLockout||{attempts:0,lockedUntil:null}}:DEF;});
-  const upd=useCallback(patch=>setState(prev=>{const n={...prev,...patch};save(n);return n;}),[]);
+  const [state,setState]=useState({...DEF});
+  const [loading,setLoading]=useState(true);
+  const [saveStatus,setSaveStatus]=useState(""); // "saving" | "saved" | "error"
+
+  // โหลดข้อมูลจาก Google Sheets ตอนเริ่ม
+  useEffect(()=>{
+    fetch(SCRIPT_URL)
+      .then(r=>r.json())
+      .then(s=>{
+        if(s&&Object.keys(s).length>0){
+          setState({...DEF,...s,batchCounter:s.batchCounter||1,authorizedUsers:s.authorizedUsers||[],pinLockout:s.pinLockout||{attempts:0,lockedUntil:null}});
+        }
+        setLoading(false);
+      })
+      .catch(()=>{ setLoading(false); });
+  },[]);
+
+  const upd=useCallback(patch=>setState(prev=>{
+    const n={...prev,...patch};
+    setSaveStatus("saving");
+    save(n).then(()=>setSaveStatus("saved")).catch(()=>setSaveStatus("error"));
+    setTimeout(()=>setSaveStatus(""),2500);
+    return n;
+  }),[]);
   const {ingredients,packaging,recipes,history,stockLog,batchCounter,authorizedUsers,pinLockout}=state;
 
   const onProduce=(batch)=>{
@@ -278,6 +306,26 @@ function App(){
           </button>
         ))}
       </div>
+      {/* Save status */}
+      {saveStatus&&(
+        <div style={{position:"fixed",bottom:20,right:20,zIndex:999,padding:"10px 18px",borderRadius:10,fontSize:13,fontWeight:700,boxShadow:"0 4px 20px rgba(0,0,0,.5)",
+          background:saveStatus==="saved"?"#0e1f08":saveStatus==="error"?"#1f0808":"#1a1a00",
+          color:saveStatus==="saved"?"#7ab648":saveStatus==="error"?"#ff6b6b":"#ff9800",
+          border:`1px solid ${saveStatus==="saved"?"#7ab64844":saveStatus==="error"?"#ff444433":"#ff980033"}`}}>
+          {saveStatus==="saving"?"💾 กำลังบันทึก...":saveStatus==="saved"?"✅ บันทึกแล้ว":saveStatus==="error"?"❌ บันทึกไม่สำเร็จ — ตรวจสอบอินเตอร์เน็ต":""}
+        </div>
+      )}
+      {/* Loading overlay */}
+      {loading&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(13,13,13,.95)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",zIndex:2000}}>
+          <div style={{fontSize:52,marginBottom:16}}>🍵</div>
+          <div style={{fontFamily:"'Noto Serif Thai',serif",fontSize:18,fontWeight:800,color:"#7ab648",marginBottom:8}}>กำลังโหลดข้อมูล...</div>
+          <div style={{fontSize:12,color:"#555"}}>เชื่อมต่อ Google Sheets</div>
+          <div style={{marginTop:20,width:200,height:3,background:"#1e1e1e",borderRadius:2,overflow:"hidden"}}>
+            <div style={{height:"100%",background:"linear-gradient(90deg,#4a8020,#7ab648)",borderRadius:2,animation:"slideLoad 1.5s ease infinite"}}/>
+          </div>
+        </div>
+      )}
       <div style={{flex:1,overflowY:"auto",padding:"20px",maxWidth:1100,width:"100%",margin:"0 auto"}}>
         {tab==="produce"&&<ProducePage ingredients={ingredients} packaging={packaging} recipes={recipes} onProduce={onProduce} batchCounter={batchCounter||1}/>}
         {tab==="stock"&&<StockPage ingredients={ingredients} packaging={packaging} onUpdateIng={v=>upd({ingredients:v})} onUpdatePack={v=>upd({packaging:v})} stockLog={stockLog||[]} onManualEdit={onManualStockEdit}/>}
@@ -423,7 +471,7 @@ function SettingsPage({authorizedUsers,onUpdate,pinLockout,onUpdateLockout}){
               {icon:"🔢",t:"PIN 6 หลัก",d:"ตัวเลขเท่านั้น แต่ละคนมี PIN ของตัวเอง"},
               {icon:"🔒",t:"ล็อค 5 นาที",d:`กรอกผิด 3 ครั้งติดกัน ระบบจะล็อคชั่วคราว`},
               {icon:"📋",t:"บันทึก Audit Log",d:"ทุกการปรับสต็อกบันทึกชื่อผู้อนุมัติ วันเวลา"},
-              {icon:"💾",t:"เก็บในเครื่อง",d:"ข้อมูลอยู่ใน Browser localStorage ไม่ส่งออก"},
+              {icon:"☁️",t:"เก็บใน Google Sheets",d:"ข้อมูลซิงค์ทุกเครื่องที่เปิดลิงก์เดียวกัน"},
             ].map((i,n)=>(
               <div key={n} style={{display:"flex",gap:12,padding:"10px 12px",background:"#111",borderRadius:9,border:"1px solid #1e1e1e"}}>
                 <span style={{fontSize:20,flexShrink:0}}>{i.icon}</span>
