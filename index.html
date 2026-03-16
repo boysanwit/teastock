@@ -432,6 +432,7 @@ function AnalyticsPage({history,ingredients,packaging,stockLog,recipes}){
   };
 
   const allItems=[...ingredients,...packaging];
+  const batchCount=history.length||1;
   const hasData=history.length>0;
   const batchCount=history.length||1;
 
